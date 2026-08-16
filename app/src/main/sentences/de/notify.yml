@@ -1,0 +1,3 @@
+notifications:
+  - (lies|sprich|(sag<e?> mir (laut)? vor))? was|was sind|was habe ich|die? (benachrichtigung<en?>|meldungen) (die ich (bekommen|erhalten) habe)?
+  - (lies|sprich|(sag<e?> mir (laut)? vor)) meine|die? (benachrichtigung<en?>|meldungen) (die ich (bekommen|erhalten) habe)?
