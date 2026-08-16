@@ -1,0 +1,9 @@
+turn_on:
+  - (schalte an)|(schalt<e?> an)|(mach<e?> an)|aktiviere (die|eine)? (taschenlampe|lampe|licht)
+  - (schalt<e?>|mach<e?>) (die|eine)? (taschenlampe|lampe|licht) an
+  - (taschenlampe|lampe|licht) (an|ein)
+
+turn_off:
+  - (schalte aus)|(schalt<e?> aus)|(mach<e?> aus)|deaktiviere (die|eine)? (taschenlampe|lampe|licht)
+  - (schalt<e?>|mach<e?>) (die|eine)? (taschenlampe|lampe|licht) aus
+  - (taschenlampe|lampe|licht) (aus|ab)
