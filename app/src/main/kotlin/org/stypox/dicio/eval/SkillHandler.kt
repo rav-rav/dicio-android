@@ -1,6 +1,7 @@
 package org.stypox.dicio.eval
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -83,21 +84,35 @@ class SkillHandler @Inject constructor(
                 .distinctUntilChanged()
                 .collectLatest { (_, enabledSkills) ->
                     // locale is not used here, because the skills directly use the sections locale
+                    Log.d(TAG, "Initializing skills with sentencesLanguage=${skillContext.sentencesLanguage}")
 
                     val newEnabledSkillsInfo = allSkillInfoList
                         .filter { enabledSkills.getOrDefault(it.id, true) }
                         .mapNotNull { info -> info.build(skillContext)?.let { skill -> Pair(info, skill) } }
+
+                    if (newEnabledSkillsInfo.size != allSkillInfoList.filter {
+                            enabledSkills.getOrDefault(it.id, true)
+                        }.size) {
+                        Log.w(TAG, "Some skills were not built (silently dropped): built size=${
+                            newEnabledSkillsInfo.size}")
+                    }
 
                     _enabledSkillsInfo.value = newEnabledSkillsInfo.map { (info, _skill) -> info }
                     _skillRanker.value = SkillRanker(
                         newEnabledSkillsInfo.map { (_info, skill) -> skill },
                         fallbackSkillInfoList[0].build(skillContext)!!,
                     )
+                    Log.d(
+                        TAG,
+                        "ranker=${_skillRanker.value.hashCode()} skills=${newEnabledSkillsInfo.map { it.first.id }}",
+                    )
                 }
         }
     }
 
     companion object {
+        val TAG = SkillHandler::class.simpleName
+
         fun newForPreviews(context: Context): SkillHandler {
             return SkillHandler(
                 UserSettingsModule.newDataStoreForPreviews(),

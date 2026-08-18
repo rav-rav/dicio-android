@@ -24,7 +24,6 @@ import org.stypox.dicio.ui.home.InteractionLog
 import org.stypox.dicio.ui.home.PendingQuestion
 import org.stypox.dicio.ui.home.QuestionAnswer
 import javax.inject.Singleton
-import org.dicio.skill.standard.util.MatchHelper
 
 interface SkillEvaluator {
     val state: StateFlow<InteractionLog>
@@ -41,6 +40,10 @@ class SkillEvaluatorImpl(
 ) : SkillEvaluator {
 
     private val scope = CoroutineScope(Dispatchers.Default)
+
+    // serializes the match-selection critical section against concurrent evaluations that share the
+    // mutable `skillContext.standardMatchHelper` (see `selectMatchingSkill` in SkillMatchSelector.kt)
+    private val matchLock = Any()
 
     private val skillRanker: SkillRanker
         get() = skillHandler.skillRanker.value
@@ -96,21 +99,16 @@ class SkillEvaluatorImpl(
     }
 
     private suspend fun evaluateMatchingSkill(utterances: List<String>) {
+        Log.d(
+            TAG,
+            "evaluating ${utterances.size} utterance(s), first: '${utterances.firstOrNull()}', " +
+                "ranker=${skillRanker.hashCode()}",
+        )
         val (chosenInput, chosenSkill) = try {
-            utterances.firstNotNullOfOrNull { input: String ->
-                skillContext.standardMatchHelper = MatchHelper(skillContext.parserFormatter, input)
-                skillRanker.getBest(skillContext, input)?.let { skillWithResult ->
-                    Pair(input, skillWithResult)
-                }
-            } ?: Pair(utterances[0], skillRanker.getFallbackSkill(skillContext, utterances[0]))
+            selectMatchingSkill(matchLock, skillContext, { skillRanker }, utterances)
         } catch (throwable: Throwable) {
             addErrorInteractionFromPending(throwable)
             return
-        } finally {
-            // standardMatchHelper only needs to be set while calling score() on skills, so once
-            // all matching and scoring is done, free up the memory it uses (which may be
-            // significant since the purpose of MatchHelper is to cache information about the input)
-            skillContext.standardMatchHelper = null
         }
         val skillInfo = chosenSkill.skill.correspondingSkillInfo
 

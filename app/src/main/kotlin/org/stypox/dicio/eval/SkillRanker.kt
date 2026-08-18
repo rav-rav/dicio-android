@@ -1,9 +1,14 @@
 package org.stypox.dicio.eval
 
+import android.util.Log
 import org.dicio.skill.skill.Skill
 import org.dicio.skill.context.SkillContext
 import org.dicio.skill.skill.Specificity
+import org.dicio.skill.standard.construct.Construct
+import org.dicio.skill.standard.util.MatchHelper
+import org.dicio.skill.standard.util.initialMemToEnd
 import org.dicio.skill.util.CleanableUp
+import org.stypox.dicio.sentences.Sentences
 import java.util.Stack
 
 class SkillRanker(
@@ -28,35 +33,116 @@ class SkillRanker(
         }
 
         fun getBest(ctx: SkillContext, input: String): SkillWithResult<*>? {
+            Log.d(
+                TAG,
+                "batch input='$input' " +
+                    "high=${highSkills.map { it.correspondingSkillInfo.id }} " +
+                    "medium=${mediumSkills.map { it.correspondingSkillInfo.id }} " +
+                    "low=${lowSkills.map { it.correspondingSkillInfo.id }}",
+            )
+
+            // === Phase 5 discriminator probes (temporary, remove after diagnosis) ===
+            try {
+                val h = ctx.standardMatchHelper
+                Log.d(TAG, "helper sameInstance=${h?.userInput === input} equals=${h?.userInput == input} " +
+                    "userInputLen=${h?.userInput?.length} words=${h?.splitWords?.map { it.nfkdNormalizedText }}")
+                Log.d(TAG, "inputHex=${input.take(32).map { it.code.toString(16).padStart(4, '0') }.joinToString("")} " +
+                    "regexSanity witz=${Regex("witz").matches("witz")} " +
+                    "wordPatternCount=${Regex("\\p{L}+").findAll(input).count()}")
+                Sentences.Joke["de"]?.let { jokeData ->
+                    val hardInput = "hast du einen witz"
+                    val (s1, _) = jokeData.score(MatchHelper(null, hardInput), hardInput)
+                    val (s2, _) = jokeData.score(MatchHelper(null, input), input)
+                    Log.d(TAG, "probeHardcoded=${s1.scoreIn01Range()} probeRuntime=${s2.scoreIn01Range()}")
+
+                    // Phase 6.2: graph dump
+                    jokeData.toString().chunked(1500).forEachIndexed { i, c ->
+                        Log.d(TAG, "jokeGraph[$i]: $c")
+                    }
+
+                    // Phase 6.3: per-sentence reflection breakdown
+                    dumpSentences(jokeData, "joke", hardInput)
+                }
+                Sentences.CurrentTime["de"]?.let { ctData ->
+                    val ctInput = "wie spät ist es"
+                    val (ctScore, _) = ctData.score(MatchHelper(null, ctInput), ctInput)
+                    Log.d(TAG, "ctWhole=${ctScore.scoreIn01Range()}")
+                    dumpSentences(ctData, "currentTime", ctInput)
+                }
+            } catch (t: Throwable) {
+                Log.d(TAG, "probe error: $t")
+            }
+            // === end Phase 5 probes ===
+
             // first round: considering only high-priority skills
             val bestHigh = getBestForSpecificity(ctx, highSkills, input)
             if (bestHigh != null && bestHigh.score.scoreIn01Range() > HIGH_THRESHOLD_1) {
+                Log.d(TAG, "round1 winner=${bestHigh.skill.correspondingSkillInfo.id} " +
+                    "score=${bestHigh.score.scoreIn01Range()} (threshold $HIGH_THRESHOLD_1)")
                 return bestHigh
             }
 
             // second round: considering both medium- and high-priority skills
             val bestMedium = getBestForSpecificity(ctx, mediumSkills, input)
             if (bestMedium != null && bestMedium.score.scoreIn01Range() > MEDIUM_THRESHOLD_2) {
+                Log.d(TAG, "round2 winner=${bestMedium.skill.correspondingSkillInfo.id} " +
+                    "score=${bestMedium.score.scoreIn01Range()} (threshold $MEDIUM_THRESHOLD_2)")
                 return bestMedium
             } else if (bestHigh != null && bestHigh.score.scoreIn01Range() > HIGH_THRESHOLD_2) {
+                Log.d(TAG, "round2 winner=${bestHigh.skill.correspondingSkillInfo.id} " +
+                    "score=${bestHigh.score.scoreIn01Range()} (threshold $HIGH_THRESHOLD_2)")
                 return bestHigh
             }
 
             // third round: all skills are considered
             val bestLow = getBestForSpecificity(ctx, lowSkills, input)
             if (bestLow != null && bestLow.score.scoreIn01Range() > LOW_THRESHOLD_3) {
+                Log.d(TAG, "round3 winner=${bestLow.skill.correspondingSkillInfo.id} " +
+                    "score=${bestLow.score.scoreIn01Range()} (threshold $LOW_THRESHOLD_3)")
                 return bestLow
             } else if (bestMedium != null && bestMedium.score.scoreIn01Range() > MEDIUM_THRESHOLD_3) {
+                Log.d(TAG, "round3 winner=${bestMedium.skill.correspondingSkillInfo.id} " +
+                    "score=${bestMedium.score.scoreIn01Range()} (threshold $MEDIUM_THRESHOLD_3)")
                 return bestMedium
             } else if (bestHigh != null && bestHigh.score.scoreIn01Range() > HIGH_THRESHOLD_3) {
+                Log.d(TAG, "round3 winner=${bestHigh.skill.correspondingSkillInfo.id} " +
+                    "score=${bestHigh.score.scoreIn01Range()} (threshold $HIGH_THRESHOLD_3)")
                 return bestHigh
             }
 
+            Log.d(TAG, "no match: bestHigh=${bestHigh?.let { it.skill.correspondingSkillInfo.id to it.score.scoreIn01Range() }} " +
+                "bestMedium=${bestMedium?.let { it.skill.correspondingSkillInfo.id to it.score.scoreIn01Range() }} " +
+                "bestLow=${bestLow?.let { it.skill.correspondingSkillInfo.id to it.score.scoreIn01Range() }}")
             // nothing was matched
             return null
         }
 
+        private fun dumpSentences(data: Any, label: String, input: String) {
+            try {
+                val field = data.javaClass.getDeclaredField("sentencesWithId")
+                field.isAccessible = true
+                @Suppress("UNCHECKED_CAST")
+                val sentences = field.get(data) as List<Pair<String, Any>>
+                Log.d(TAG, "$label sentences=${sentences.size}")
+                val h = org.dicio.skill.standard.util.MatchHelper(null, input)
+                sentences.forEachIndexed { i, (id, construct) ->
+                    val mem = initialMemToEnd(h.cumulativeWeight)
+                    (construct as Construct).matchToEnd(mem, h)
+                    val s = mem[0]
+                    Log.d(
+                        TAG,
+                        "$label sentence[$i] id=$id um=${s.userMatched} uw=${s.userWeight} " +
+                            "rm=${s.refMatched} rw=${s.refWeight} in01=${s.scoreIn01Range()}",
+                    )
+                }
+            } catch (t: Throwable) {
+                Log.d(TAG, "$label breakdown error: $t")
+            }
+        }
+
         companion object {
+            private val TAG = SkillBatch::class.simpleName
+
             private fun getBestForSpecificity(
                 ctx: SkillContext,
                 skills: List<Skill<*>>,
